@@ -7,7 +7,7 @@ if __name__ == '__main__':
     # python -m twine upload dist/*
     setup(
         name='eveliver',
-        version='1.0.0',
+        version='1.1.0',
         description='Some pytorch utilities for NLP',
         author='Jiaju Du',
         author_email='i@dujiaju.me',
