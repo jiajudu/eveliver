@@ -14,7 +14,7 @@ if __name__ == '__main__':
         url='https://github.com/jiajudu/evelivers',
         packages=['eveliver'],
         install_requires=[
-            'torch>=1.3.0',
+            'torch>=1.2.0',
             'numpy>=1.16.4'
         ]
     )
