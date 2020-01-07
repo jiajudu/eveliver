@@ -57,3 +57,26 @@ def get_best_span(a, b):
     indices = torch.cat(((m % s).view(-1, 1), (m / s).view(-1, 1)), dim=1)
     confidence = torch.exp(torch.max(torch.max(score, dim=1)[0], dim=1)[0] - torch.logsumexp(torch.logsumexp(score, dim=1), dim=1))
     return indices, confidence
+
+
+def list_find(a, b):
+    first_matches = list()
+    offset = -1
+    element = b[0]
+    while True:
+        try:
+            offset = a.index(element, offset + 1)
+        except ValueError:
+            break
+        first_matches.append(offset)
+    ret = list()
+    for m in first_matches:
+        if m + len(b) <= len(a):
+            match = True
+            for i in range(1, len(b)):
+                if a[m + i] != b[i]:
+                    match = False
+                    break
+            if match:
+                ret.append([m, m + len(b) - 1])
+    return ret
