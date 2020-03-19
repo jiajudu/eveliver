@@ -7,14 +7,15 @@ if __name__ == '__main__':
     # python -m twine upload dist/*
     setup(
         name='eveliver',
-        version='1.4.0',
+        version='1.5.0',
         description='Some pytorch utilities for NLP',
         author='Jiaju Du',
         author_email='i@dujiaju.me',
-        url='https://github.com/jiajudu/evelivers',
+        url='https://github.com/jiajudu/eveliver',
         packages=['eveliver'],
         install_requires=[
-            'torch>=1.2.0',
-            'numpy>=1.16.4'
+            'torch>=1.4.0',
+            'numpy>=1.18.2',
+            'transformers>=2.5.1'
         ]
     )
