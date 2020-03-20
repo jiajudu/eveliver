@@ -8,3 +8,4 @@ from .padding import *
 from .span import *
 from .timer import *
 from .transformers import *
+from .visualization import *
