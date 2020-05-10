@@ -23,8 +23,8 @@ def experiment_init(args):
     if args.local_rank == -1:
         args.device = torch.device('cuda')
     else:
-        torch.cuda.set_device(args.local_rank)
-        args.device = torch.device("cuda", args.local_rank)
+        torch.cuda.set_device(args.local_rank % torch.cuda.device_count())
+        args.device = torch.device("cuda", args.local_rank % torch.cuda.device_count())
         torch.distributed.init_process_group(backend='nccl')
     if args.local_rank > 0:
         torch.distributed.barrier()
