@@ -1,5 +1,6 @@
 import collections
 import re
+from typing import List
 import string
 
 import torch
@@ -80,3 +81,16 @@ def list_find(a, b):
             if match:
                 ret.append([m, m + len(b) - 1])
     return ret
+
+
+def findall(a: str, b: str) -> List[int]:
+    matches = list()
+    offset = 0
+    while True:
+        o = a.find(b, offset)
+        if o >= 0:
+            matches.append(o)
+            offset = o + 1
+        else:
+            break
+    return matches
