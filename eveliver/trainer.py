@@ -16,6 +16,11 @@ from tqdm import tqdm
 from transformers import AdamW, get_linear_schedule_with_warmup
 
 
+class ContextError(Exception):
+    def __init__(self):
+        pass
+
+
 class Once:
     def __init__(self, rank):
         self.rank = rank
@@ -28,10 +33,13 @@ class Once:
         return True
 
     def trace(self, frame, event, arg):
-        raise Exception
+        raise ContextError
 
     def __exit__(self, type, value, traceback):
-        return False
+        if type == ContextError:
+            return True
+        else:
+            return False
 
 
 class OnceBarrier:
@@ -46,12 +54,15 @@ class OnceBarrier:
         return True
 
     def trace(self, frame, event, arg):
-        raise Exception
+        raise ContextError
 
     def __exit__(self, type, value, traceback):
         if self.rank >= 0:
             torch.distributed.barrier()
-        return False
+        if type == ContextError:
+            return True
+        else:
+            return False
 
 
 class Cache:
@@ -89,6 +100,9 @@ class TrainerCallback:
 
     def load_data(self, trainer, args):
         pass
+
+    def collate_fn(self, trainer, args):
+        return None, None, None
 
     def on_train_epoch_start(self, trainer, epoch):
         pass
@@ -154,8 +168,9 @@ class Trainer:
         self.parser.add_argument("--epochs", default=3, type=int)
         self.parser.add_argument("--warmup_ratio", default=0.0, type=float)
         self.parser.add_argument("--logging_steps", type=int, default=500)
-        self.parser.add_argument("--save_steps", type=int, default=500)
+        self.parser.add_argument("--save_steps", type=int, default=10000)
         self.parser.add_argument("--seed", type=int, default=42)
+        self.parser.add_argument("--num_workers", type=int, default=0)
         self.parser.add_argument("--local_rank", type=int, default=-1)
         self.parser.add_argument("--fp16", action="store_true")
         self.parser.add_argument("--fp16_opt_level", type=str, default="O1")
@@ -188,6 +203,7 @@ class Trainer:
         self.logging_steps = self.args.logging_steps
         self.save_steps = self.args.save_steps
         self.seed = self.args.seed
+        self.num_workers = self.args.num_workers
         self.local_rank = self.args.local_rank
         self.fp16 = self.args.fp16
         self.fp16_opt_level = self.args.fp16_opt_level
@@ -261,12 +277,13 @@ class Trainer:
         self.epochs_trained = 0
         self.steps_trained_in_current_epoch = 0
         train_dataset, dev_dataset, test_dataset = self.callback.load_data(self, self.args)
+        train_fn, dev_fn, test_fn = self.callback.collate_fn(self, self.args)
         if train_dataset:
             if self.dataset_ratio < 1:
                 train_dataset = torch.utils.data.Subset(train_dataset, list(range(int(len(train_dataset) * self.dataset_ratio))))
             self.train_dataset = train_dataset
             train_sampler = RandomSampler(self.train_dataset) if self.local_rank == -1 else DistributedSampler(self.train_dataset)
-            self.train_dataloader = DataLoader(self.train_dataset, sampler=train_sampler, batch_size=self.train_batch_size)
+            self.train_dataloader = DataLoader(self.train_dataset, sampler=train_sampler, batch_size=self.train_batch_size, collate_fn=train_fn, num_workers=self.num_workers)
             self.t_total = len(self.train_dataloader) // self.gradient_accumulation_steps * self.epochs
             self.scheduler = get_linear_schedule_with_warmup(self.optimizer, num_warmup_steps=int(self.t_total * self.warmup_ratio), num_training_steps=self.t_total)
         if dev_dataset:
@@ -274,13 +291,13 @@ class Trainer:
                 dev_dataset = torch.utils.data.Subset(dev_dataset, list(range(int(len(dev_dataset) * self.dataset_ratio))))
             self.dev_dataset = dev_dataset
             dev_sampler = SequentialSampler(self.dev_dataset) if self.local_rank == -1 else DistributedSampler(self.dev_dataset)
-            self.dev_dataloader = DataLoader(self.dev_dataset, sampler=dev_sampler, batch_size=self.eval_batch_size)
+            self.dev_dataloader = DataLoader(self.dev_dataset, sampler=dev_sampler, batch_size=self.eval_batch_size, collate_fn=dev_fn, num_workers=self.num_workers)
         if test_dataset:
             if self.dataset_ratio < 1:
                 test_dataset = torch.utils.data.Subset(test_dataset, list(range(int(len(test_dataset) * self.dataset_ratio))))
             self.test_dataset = test_dataset
             test_sampler = SequentialSampler(self.test_dataset) if self.local_rank == -1 else DistributedSampler(self.test_dataset)
-            self.test_dataloader = DataLoader(self.test_dataset, sampler=test_sampler, batch_size=self.eval_batch_size)
+            self.test_dataloader = DataLoader(self.test_dataset, sampler=test_sampler, batch_size=self.eval_batch_size, collate_fn=test_fn, num_workers=self.num_workers)
 
     def restore_checkpoint(self, path, ignore_progress=False):
         self.model.load_state_dict(torch.load(os.path.join(path, 'pytorch_model.bin'), map_location=torch.device('cpu')))
@@ -345,11 +362,19 @@ class Trainer:
                         loss = loss.mean()
                     if self.gradient_accumulation_steps > 1:
                         loss = loss / self.gradient_accumulation_steps
-                    if self.fp16:
-                        with apex.amp.scale_loss(loss, self.optimizer) as scaled_loss:
-                            scaled_loss.backward()
+                    if (step + 1) % self.gradient_accumulation_steps == 0:
+                        if self.fp16:
+                            with apex.amp.scale_loss(loss, self.optimizer) as scaled_loss:
+                                scaled_loss.backward()
+                        else:
+                            loss.backward()
                     else:
-                        loss.backward()
+                        with self.model.no_sync():
+                            if self.fp16:
+                                with apex.amp.scale_loss(loss, self.optimizer) as scaled_loss:
+                                    scaled_loss.backward()
+                            else:
+                                loss.backward()
                     tr_loss += loss.item()
                     if (step + 1) % self.gradient_accumulation_steps == 0:
                         if self.fp16:
