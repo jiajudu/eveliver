@@ -346,7 +346,8 @@ class Trainer:
         for epoch in range(self.epochs):
             if epoch < self.epochs_trained:
                 continue
-            logging.info('epoch %d', epoch)
+            with self.once():
+                logging.info('epoch %d', epoch)
             if self.train:
                 tr_loss, logging_loss = 0.0, 0.0
                 self.model.zero_grad()
@@ -362,7 +363,7 @@ class Trainer:
                         loss = loss.mean()
                     if self.gradient_accumulation_steps > 1:
                         loss = loss / self.gradient_accumulation_steps
-                    if (step + 1) % self.gradient_accumulation_steps == 0:
+                    if self.local_rank < 0 or (step + 1) % self.gradient_accumulation_steps == 0:
                         if self.fp16:
                             with apex.amp.scale_loss(loss, self.optimizer) as scaled_loss:
                                 scaled_loss.backward()
@@ -400,7 +401,7 @@ class Trainer:
                 with torch.no_grad():
                     self.model.eval()
                     self.callback.on_dev_epoch_start(epoch, self)
-                    for step, batch in enumerate(tqdm(self.dev_dataloader)):
+                    for step, batch in enumerate(tqdm(self.dev_dataloader, disable=self.local_rank > 0)):
                         inputs, extra = self.callback.process_dev_data(self, batch)
                         outputs = self.model(**inputs)
                         self.callback.on_dev_step(step, inputs, extra, outputs)
@@ -414,7 +415,7 @@ class Trainer:
                     self.restore_checkpoint(os.path.join('output', "checkpoint-{}".format(best_step)))
                 self.model.eval()
                 self.callback.on_test_epoch_start(epoch, self)
-                for step, batch in enumerate(tqdm(self.test_dataloader)):
+                for step, batch in enumerate(tqdm(self.test_dataloader, disable=self.local_rank > 0)):
                     inputs, extra = self.callback.process_test_data(self, batch)
                     outputs = self.model(**inputs)
                     self.callback.on_test_step(step, inputs, extra, outputs)
