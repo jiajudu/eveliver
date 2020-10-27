@@ -178,6 +178,7 @@ class Trainer:
         self.parser.add_argument("--load_checkpoint", default=None, type=str)
         self.parser.add_argument("--ignore_progress", action='store_true')
         self.parser.add_argument("--dataset_ratio", type=float, default=1.0)
+        self.parser.add_argument("--no_save", action="store_true")
         self.callback.on_argument(self.parser)
         self.args = self.parser.parse_args()
         keys = list(self.args.__dict__.keys())
@@ -211,6 +212,7 @@ class Trainer:
         self.load_checkpoint = self.args.load_checkpoint
         self.ignore_progress = self.args.ignore_progress
         self.dataset_ratio = self.args.dataset_ratio
+        self.no_save = self.args.no_save
 
     def set_env(self):
         if self.debug:
@@ -300,6 +302,8 @@ class Trainer:
             self.test_dataloader = DataLoader(self.test_dataset, sampler=test_sampler, batch_size=self.eval_batch_size, collate_fn=test_fn, num_workers=self.num_workers)
 
     def restore_checkpoint(self, path, ignore_progress=False):
+        if self.no_save:
+            return
         self.model.load_state_dict(torch.load(os.path.join(path, 'pytorch_model.bin'), map_location=torch.device('cpu')))
         self.model.to(self.device)
         self.optimizer.load_state_dict(torch.load(os.path.join(path, "optimizer.pt")))
@@ -322,6 +326,8 @@ class Trainer:
             model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[self.local_rank], output_device=self.local_rank, find_unused_parameters=True)
     
     def save_checkpoint(self):
+        if self.no_save:
+            return
         output_dir = os.path.join('output', "checkpoint-{}".format(self.train_step))
         if not os.path.exists(output_dir):
             os.mkdir(output_dir)
