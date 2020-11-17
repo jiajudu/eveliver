@@ -95,61 +95,62 @@ class TrainerCallback:
     def on_argument(self, parser):
         pass
 
-    def load_model(self, trainer, args):
+    def load_model(self):
         pass
 
-    def load_data(self, trainer, args):
+    def load_data(self):
         pass
 
-    def collate_fn(self, trainer, args):
+    def collate_fn(self):
         return None, None, None
 
-    def on_train_epoch_start(self, trainer, epoch):
+    def on_train_epoch_start(self, epoch):
         pass
 
     def on_train_step(self, step, train_step, inputs, extra, loss, outputs):
         pass
     
-    def on_train_epoch_end(self, trainer, epoch):
+    def on_train_epoch_end(self, epoch):
         pass
 
-    def on_dev_epoch_start(self, trainer, epoch):
+    def on_dev_epoch_start(self, epoch):
         pass
 
     def on_dev_step(self, step, inputs, extra, outputs):
         pass
     
-    def on_dev_epoch_end(self, trainer, epoch):
+    def on_dev_epoch_end(self, epoch):
         pass
 
-    def on_test_epoch_start(self, trainer, epoch):
+    def on_test_epoch_start(self, epoch):
         pass
 
     def on_test_step(self, step, inputs, extra, outputs):
         pass
     
-    def on_test_epoch_end(self, trainer, epoch):
+    def on_test_epoch_end(self, epoch):
         pass
 
-    def process_train_data(self, trainer, data):
+    def process_train_data(self, data):
         pass
 
-    def process_dev_data(self, trainer, data):
+    def process_dev_data(self, data):
         pass
 
-    def process_test_data(self, trainer, data):
+    def process_test_data(self, data):
         pass
 
-    def on_save(self, trainer, path):
+    def on_save(self, path):
         pass
 
-    def on_load(self, trainer, path):
+    def on_load(self, path):
         pass
 
 
 class Trainer:
     def __init__(self, callback: TrainerCallback):
         self.callback = callback
+        self.callback.trainer = self
         logging.basicConfig(level=logging.INFO)
 
     def parse_args(self):
@@ -165,7 +166,7 @@ class Trainer:
         self.parser.add_argument("--weight_decay", default=0.0, type=float)
         self.parser.add_argument("--adam_epsilon", default=1e-8, type=float)
         self.parser.add_argument("--max_grad_norm", default=1.0, type=float)
-        self.parser.add_argument("--epochs", default=3, type=int)
+        self.parser.add_argument("--epochs", default=2, type=int)
         self.parser.add_argument("--warmup_ratio", default=0.0, type=float)
         self.parser.add_argument("--logging_steps", type=int, default=500)
         self.parser.add_argument("--save_steps", type=int, default=10000)
@@ -213,6 +214,7 @@ class Trainer:
         self.ignore_progress = self.args.ignore_progress
         self.dataset_ratio = self.args.dataset_ratio
         self.no_save = self.args.no_save
+        self.callback.args = self.args
 
     def set_env(self):
         if self.debug:
@@ -250,7 +252,7 @@ class Trainer:
             apex.amp.register_half_function(torch, "einsum")
 
     def set_model(self):
-        self.model = self.callback.load_model(self, self.args)
+        self.model = self.callback.load_model()
         self.model.to(self.device)
         no_decay = ["bias", "LayerNorm.weight"]
         optimizer_grouped_parameters = [
@@ -278,8 +280,8 @@ class Trainer:
         self.train_step = 1
         self.epochs_trained = 0
         self.steps_trained_in_current_epoch = 0
-        train_dataset, dev_dataset, test_dataset = self.callback.load_data(self, self.args)
-        train_fn, dev_fn, test_fn = self.callback.collate_fn(self, self.args)
+        train_dataset, dev_dataset, test_dataset = self.callback.load_data()
+        train_fn, dev_fn, test_fn = self.callback.collate_fn()
         if train_dataset:
             if self.dataset_ratio < 1:
                 train_dataset = torch.utils.data.Subset(train_dataset, list(range(int(len(train_dataset) * self.dataset_ratio))))
@@ -308,22 +310,22 @@ class Trainer:
         self.model.to(self.device)
         self.optimizer.load_state_dict(torch.load(os.path.join(path, "optimizer.pt")))
         self.scheduler.load_state_dict(torch.load(os.path.join(path, "scheduler.pt")))
-        self.callback.on_load(self, path)
+        self.callback.on_load(path)
         if not ignore_progress:
             self.train_step = int(path.split("-")[-1])
-            self.epochs_trained = self.train_step // (len(train_dataloader) // trainer.gradient_accumulation_steps)
-            self.steps_trained_in_current_epoch = self.train_step % (len(train_dataloader) // trainer.gradient_accumulation_steps)
+            self.epochs_trained = self.train_step // (len(self.train_dataloader) // self.gradient_accumulation_steps)
+            self.steps_trained_in_current_epoch = self.train_step % (len(self.train_dataloader) // self.gradient_accumulation_steps)
         logging.info("  Continuing training from checkpoint, will skip to saved train_step")
-        logging.info("  Continuing training from epoch %d", epochs_trained)
-        logging.info("  Continuing training from train step %d", train_step)
-        logging.info("  Will skip the first %d steps in the first epoch", steps_trained_in_current_epoch)
+        logging.info("  Continuing training from epoch %d", self.epochs_trained)
+        logging.info("  Continuing training from train step %d", self.train_step)
+        logging.info("  Will skip the first %d steps in the first epoch", self.steps_trained_in_current_epoch)
         if self.fp16:
             apex.amp.register_half_function(torch, "einsum")
             self.model, self.optimizer = amp.initialize(self.model, self.optimizer, opt_level=self.fp16_opt_level)
         if self.n_gpu > 1:
-            model = torch.nn.DataParallel(model)
+            self.model = torch.nn.DataParallel(model)
         if self.local_rank != -1:
-            model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[self.local_rank], output_device=self.local_rank, find_unused_parameters=True)
+            self.model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[self.local_rank], output_device=self.local_rank, find_unused_parameters=True)
     
     def save_checkpoint(self):
         if self.no_save:
@@ -336,17 +338,17 @@ class Trainer:
         torch.save(self.args, os.path.join(output_dir, "training_args.bin"))
         torch.save(self.optimizer.state_dict(), os.path.join(output_dir, "optimizer.pt"))
         torch.save(self.scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
-        self.callback.on_save(self, output_dir)
+        self.callback.on_save(output_dir)
 
     def run(self):
         self.parse_args()
         self.set_env()
+        with self.once():
+            self.writer = SummaryWriter()
         self.set_model()
         self.load_data()
         if self.load_checkpoint is not None:
             self.restore_checkpoint(self.load_checkpoint, self.ignore_progress)
-        with self.once():
-            tb_writer = SummaryWriter()
         best_performance = 0
         best_step = -1
         for epoch in range(self.epochs):
@@ -358,11 +360,11 @@ class Trainer:
                 tr_loss, logging_loss = 0.0, 0.0
                 self.model.zero_grad()
                 self.model.train()
-                self.callback.on_train_epoch_start(epoch, self)
+                self.callback.on_train_epoch_start(epoch)
                 for step, batch in enumerate(tqdm(self.train_dataloader, disable=self.local_rank > 0)):
                     if step < self.steps_trained_in_current_epoch:
                         continue
-                    inputs, extra = self.callback.process_train_data(self, batch)
+                    inputs, extra = self.callback.process_train_data(batch)
                     outputs = self.model(**inputs)
                     loss = outputs[0]
                     if self.n_gpu > 1:
@@ -394,24 +396,24 @@ class Trainer:
                         self.train_step += 1
                         with self.once():
                             if self.train_step % self.logging_steps == 0:
-                                tb_writer.add_scalar("lr", self.scheduler.get_lr()[0], self.train_step)
-                                tb_writer.add_scalar("loss", (tr_loss - logging_loss) / self.logging_steps, self.train_step)
+                                self.writer.add_scalar("lr", self.scheduler.get_lr()[0], self.train_step)
+                                self.writer.add_scalar("loss", (tr_loss - logging_loss) / self.logging_steps, self.train_step)
                                 logging_loss = tr_loss
                             if self.train_step % self.save_steps == 0:
                                 self.save_checkpoint()
                     self.callback.on_train_step(step, self.train_step, inputs, extra, loss.item(), outputs)
                 with self.once():
                     self.save_checkpoint()
-                self.callback.on_train_epoch_end(epoch, self)
+                self.callback.on_train_epoch_end(epoch)
             if self.dev:
                 with torch.no_grad():
                     self.model.eval()
-                    self.callback.on_dev_epoch_start(epoch, self)
+                    self.callback.on_dev_epoch_start(epoch)
                     for step, batch in enumerate(tqdm(self.dev_dataloader, disable=self.local_rank > 0)):
-                        inputs, extra = self.callback.process_dev_data(self, batch)
+                        inputs, extra = self.callback.process_dev_data(batch)
                         outputs = self.model(**inputs)
                         self.callback.on_dev_step(step, inputs, extra, outputs)
-                    performance = self.callback.on_dev_epoch_end(epoch, self)
+                    performance = self.callback.on_dev_epoch_end(epoch)
                     if performance > best_performance:
                         best_performance = performance
                         best_step = self.train_step
@@ -420,13 +422,14 @@ class Trainer:
                 if best_step > 0:
                     self.restore_checkpoint(os.path.join('output', "checkpoint-{}".format(best_step)))
                 self.model.eval()
-                self.callback.on_test_epoch_start(epoch, self)
+                self.callback.on_test_epoch_start(epoch)
                 for step, batch in enumerate(tqdm(self.test_dataloader, disable=self.local_rank > 0)):
-                    inputs, extra = self.callback.process_test_data(self, batch)
+                    inputs, extra = self.callback.process_test_data(batch)
                     outputs = self.model(**inputs)
                     self.callback.on_test_step(step, inputs, extra, outputs)
+                self.callback.on_test_epoch_end(epoch)
         with self.once():
-            tb_writer.close()
+            self.writer.close()
         json.dump(True, open('output/f.json', 'w'))
 
     def distributed_broadcast(self, l):
