@@ -167,7 +167,7 @@ class Trainer:
         self.parser.add_argument("--adam_epsilon", default=1e-8, type=float)
         self.parser.add_argument("--max_grad_norm", default=1.0, type=float)
         self.parser.add_argument("--epochs", default=2, type=int)
-        self.parser.add_argument("--warmup_ratio", default=0.0, type=float)
+        self.parser.add_argument("--warmup_ratio", default=0.1, type=float)
         self.parser.add_argument("--logging_steps", type=int, default=500)
         self.parser.add_argument("--save_steps", type=int, default=10000)
         self.parser.add_argument("--seed", type=int, default=42)
@@ -325,7 +325,7 @@ class Trainer:
         if self.n_gpu > 1:
             self.model = torch.nn.DataParallel(model)
         if self.local_rank != -1:
-            self.model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[self.local_rank], output_device=self.local_rank, find_unused_parameters=True)
+            self.model = torch.nn.parallel.DistributedDataParallel(self.model, device_ids=[self.local_rank], output_device=self.local_rank, find_unused_parameters=True)
     
     def save_checkpoint(self):
         if self.no_save:
@@ -456,3 +456,43 @@ class Trainer:
                         ret[k] = v
             torch.distributed.barrier()
             return ret
+
+    def distributed_merge(self, l):
+        assert type(l) == list or type(l) == dict
+        if self.local_rank < 0:
+            return l
+        else:
+            torch.distributed.barrier()
+            process_number = torch.distributed.get_world_size()
+            json.dump(l, open(f'tmp/{self.local_rank}.json', 'w'))
+            torch.distributed.barrier()
+            if self.local_rank == 0:
+                objs = list()
+                for i in range(process_number):
+                    objs.append(json.load(open(f'tmp/{i}.json')))
+                if type(objs[0]) == list:
+                    ret = list()
+                    for i in range(process_number):
+                        ret.extend(objs[i])
+                else:
+                    ret = dict()
+                    for i in range(process_number):
+                        for k, v in objs.items():
+                            assert k not in ret
+                            ret[k] = v
+            else:
+                ret = None
+            torch.distributed.barrier()
+            return ret
+
+    def distributed_get(self, v):
+        if self.local_rank < 0:
+            return v
+        else:
+            torch.distributed.barrier()
+            if self.local_rank == 0:
+                json.dump(v, open('tmp/v.json', 'w'))
+            torch.distributed.barrier()
+            v = json.load(open('tmp/v.json'))
+            torch.distributed.barrier()
+            return v
