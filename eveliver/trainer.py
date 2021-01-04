@@ -325,22 +325,22 @@ class Trainer:
             if self.dataset_ratio < 1:
                 train_dataset = torch.utils.data.Subset(train_dataset, list(range(int(len(train_dataset) * self.dataset_ratio))))
             self.train_dataset = train_dataset
-            train_sampler = RandomSampler(self.train_dataset) if self.local_rank == -1 else DistributedSampler(self.train_dataset)
-            self.train_dataloader = Prefetcher(DataLoader(self.train_dataset, sampler=train_sampler, batch_size=self.train_batch_size, collate_fn=train_fn, num_workers=self.num_workers), self.stream)
+            self.train_sampler = RandomSampler(self.train_dataset) if self.local_rank == -1 else DistributedSampler(self.train_dataset)
+            self.train_dataloader = Prefetcher(DataLoader(self.train_dataset, sampler=self.train_sampler, batch_size=self.train_batch_size, collate_fn=train_fn, num_workers=self.num_workers), self.stream)
             self.t_total = len(self.train_dataloader) // self.gradient_accumulation_steps * self.epochs
             self.scheduler = get_linear_schedule_with_warmup(self.optimizer, num_warmup_steps=int(self.t_total * self.warmup_ratio), num_training_steps=self.t_total)
         if dev_dataset:
             if self.dataset_ratio < 1:
                 dev_dataset = torch.utils.data.Subset(dev_dataset, list(range(int(len(dev_dataset) * self.dataset_ratio))))
             self.dev_dataset = dev_dataset
-            dev_sampler = SequentialSampler(self.dev_dataset) if self.local_rank == -1 else DistributedSampler(self.dev_dataset)
-            self.dev_dataloader = Prefetcher(DataLoader(self.dev_dataset, sampler=dev_sampler, batch_size=self.eval_batch_size, collate_fn=dev_fn, num_workers=self.num_workers), self.stream)
+            self.dev_sampler = SequentialSampler(self.dev_dataset) if self.local_rank == -1 else DistributedSampler(self.dev_dataset)
+            self.dev_dataloader = Prefetcher(DataLoader(self.dev_dataset, sampler=self.dev_sampler, batch_size=self.eval_batch_size, collate_fn=dev_fn, num_workers=self.num_workers), self.stream)
         if test_dataset:
             if self.dataset_ratio < 1:
                 test_dataset = torch.utils.data.Subset(test_dataset, list(range(int(len(test_dataset) * self.dataset_ratio))))
             self.test_dataset = test_dataset
-            test_sampler = SequentialSampler(self.test_dataset) if self.local_rank == -1 else DistributedSampler(self.test_dataset)
-            self.test_dataloader = Prefetcher(DataLoader(self.test_dataset, sampler=test_sampler, batch_size=self.eval_batch_size, collate_fn=test_fn, num_workers=self.num_workers), self.stream)
+            self.test_sampler = SequentialSampler(self.test_dataset) if self.local_rank == -1 else DistributedSampler(self.test_dataset)
+            self.test_dataloader = Prefetcher(DataLoader(self.test_dataset, sampler=self.test_sampler, batch_size=self.eval_batch_size, collate_fn=test_fn, num_workers=self.num_workers), self.stream)
 
     def restore_checkpoint(self, path, ignore_progress=False):
         if self.no_save:
@@ -400,6 +400,8 @@ class Trainer:
                 self.model.zero_grad()
                 self.model.train()
                 self.callback.on_train_epoch_start(epoch)
+                if self.local_rank >= 0:
+                    self.train_sampler.set_epoch(epoch)
                 for step, batch in enumerate(tqdm(self.train_dataloader, disable=self.local_rank > 0)):
                     if step < self.steps_trained_in_current_epoch:
                         continue
