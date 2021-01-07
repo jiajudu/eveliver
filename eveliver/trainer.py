@@ -345,10 +345,10 @@ class Trainer:
     def restore_checkpoint(self, path, ignore_progress=False):
         if self.no_save:
             return
-        self.model.load_state_dict(torch.load(os.path.join(path, 'pytorch_model.bin'), map_location=torch.device('cpu')))
-        self.model.to(self.device)
-        self.optimizer.load_state_dict(torch.load(os.path.join(path, "optimizer.pt")))
-        self.scheduler.load_state_dict(torch.load(os.path.join(path, "scheduler.pt")))
+        model_to_load = self.model.module if hasattr(self.model, "module") else self.model
+        model_to_load.load_state_dict(torch.load(os.path.join(path, 'pytorch_model.bin'), map_location=self.device))
+        self.optimizer.load_state_dict(torch.load(os.path.join(path, "optimizer.pt"), map_location=self.device))
+        self.scheduler.load_state_dict(torch.load(os.path.join(path, "scheduler.pt"), map_location=self.device))
         self.callback.on_load(path)
         if not ignore_progress:
             self.train_step = int(path.split("-")[-1])
@@ -358,13 +358,6 @@ class Trainer:
         logging.info("  Continuing training from epoch %d", self.epochs_trained)
         logging.info("  Continuing training from train step %d", self.train_step)
         logging.info("  Will skip the first %d steps in the first epoch", self.steps_trained_in_current_epoch)
-        if self.fp16:
-            apex.amp.register_half_function(torch, "einsum")
-            self.model, self.optimizer = amp.initialize(self.model, self.optimizer, opt_level=self.fp16_opt_level)
-        if self.n_gpu > 1:
-            self.model = torch.nn.DataParallel(model)
-        if self.local_rank != -1:
-            self.model = torch.nn.parallel.DistributedDataParallel(self.model, device_ids=[self.local_rank], output_device=self.local_rank, find_unused_parameters=True)
     
     def save_checkpoint(self):
         if self.no_save:
