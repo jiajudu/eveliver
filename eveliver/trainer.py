@@ -453,7 +453,7 @@ class Trainer:
                         best_step = self.train_step
         if self.test:
             with torch.no_grad():
-                if best_step > 0:
+                if best_step > 0 and self.train:
                     self.restore_checkpoint(os.path.join('output', "checkpoint-{}".format(best_step)))
                 self.model.eval()
                 self.callback.on_test_epoch_start(epoch)
