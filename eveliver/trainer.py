@@ -384,11 +384,9 @@ class Trainer:
         best_performance = 0
         best_step = -1
         for epoch in range(self.epochs):
-            if epoch < self.epochs_trained:
-                continue
             with self.once():
                 logging.info('epoch %d', epoch)
-            if self.train:
+            if self.train and epoch >= self.epochs_trained:
                 tr_loss, logging_loss = 0.0, 0.0
                 self.model.zero_grad()
                 self.model.train()
